@@ -1,0 +1,1003 @@
+{
+  "name": "HAz Construction PM System - Complete Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "haz-daily-report",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-daily",
+      "name": "Webhook - Daily Report",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [180, 300],
+      "webhookId": "daily-report"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "haz-weekly-report",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-weekly",
+      "name": "Webhook - Weekly Report",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [180, 500],
+      "webhookId": "weekly-report"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "haz-monthly-report",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-monthly",
+      "name": "Webhook - Monthly EVM Report",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [180, 700],
+      "webhookId": "monthly-report"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Daily Report Data\nconst input = $input.first().json;\n\n// Validate required fields\nif (!input.projectCode || !input.projectName || !input.reportDate) {\n  throw new Error('Missing required fields: projectCode, projectName, or reportDate');\n}\n\n// Parse labor data\nconst laborData = input.labor || [];\nlet totalLaborCost = 0;\nconst laborDetails = laborData.map(l => {\n  const cost = (l.quantity || 0) * (l.rate || 0);\n  totalLaborCost += cost;\n  return {\n    role: l.role || '',\n    quantity: l.quantity || 0,\n    rate: l.rate || 0,\n    cost: cost\n  };\n});\n\n// Parse equipment data\nconst equipmentData = input.equipment || [];\nlet totalEquipmentCost = 0;\nconst equipmentDetails = equipmentData.map(e => {\n  const cost = (e.quantity || 0) * (e.hours || 0) * (e.rate || 0);\n  totalEquipmentCost += cost;\n  return {\n    name: e.name || '',\n    quantity: e.quantity || 0,\n    hours: e.hours || 0,\n    rate: e.rate || 0,\n    cost: cost\n  };\n});\n\n// Parse subcontractor data\nconst subData = input.subcontractors || [];\nlet totalSubCost = 0;\nconst subDetails = subData.map(s => {\n  const netAmount = ((s.quantity || 0) * (s.rate || 0)) + (s.expenses || 0) - (s.deductions || 0);\n  totalSubCost += netAmount;\n  return {\n    company: s.company || '',\n    contact: s.contact || '',\n    quantity: s.quantity || 0,\n    rate: s.rate || 0,\n    expenses: s.expenses || 0,\n    deductions: s.deductions || 0,\n    netAmount: netAmount\n  };\n});\n\n// Calculate totals\nconst totalDirectCost = totalLaborCost + totalEquipmentCost + totalSubCost;\nconst vatAmount = totalDirectCost * 0.15;\nconst grandTotal = totalDirectCost + vatAmount;\n\nreturn {\n  json: {\n    reportType: 'daily',\n    projectCode: input.projectCode,\n    projectName: input.projectName,\n    reportDate: input.reportDate,\n    location: input.location || {},\n    weather: input.weather || '',\n    workItems: input.workItems || [],\n    labor: {\n      details: laborDetails,\n      totalCost: totalLaborCost,\n      totalWorkers: laborDetails.reduce((sum, l) => sum + l.quantity, 0)\n    },\n    equipment: {\n      details: equipmentDetails,\n      totalCost: totalEquipmentCost,\n      totalUnits: equipmentDetails.reduce((sum, e) => sum + e.quantity, 0)\n    },\n    subcontractors: {\n      details: subDetails,\n      totalCost: totalSubCost\n    },\n    financials: {\n      laborCost: totalLaborCost,\n      equipmentCost: totalEquipmentCost,\n      subcontractorCost: totalSubCost,\n      totalDirectCost: totalDirectCost,\n      vat: vatAmount,\n      grandTotal: grandTotal\n    },\n    notes: input.notes || '',\n    timestamp: input.timestamp || new Date().toISOString(),\n    submittedBy: input.submittedBy || 'System'\n  }\n};"
+      },
+      "id": "parse-daily",
+      "name": "Parse Daily Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Weekly Progress Report Data\nconst input = $input.first().json;\n\n// Validate required fields\nif (!input.projectCode || !input.projectName) {\n  throw new Error('Missing required fields: projectCode or projectName');\n}\n\n// Parse work items progress\nconst workItems = input.workItems || [];\nlet totalPV = 0;\nlet totalAC = 0;\nlet totalEV = 0;\n\nconst itemsAnalysis = workItems.map(item => {\n  const pv = item.plannedValue || 0;\n  const ac = item.actualCost || 0;\n  const ev = item.earnedValue || 0;\n  \n  totalPV += pv;\n  totalAC += ac;\n  totalEV += ev;\n  \n  const cv = ev - ac;\n  const sv = ev - pv;\n  const cpi = ac > 0 ? ev / ac : 0;\n  const spi = pv > 0 ? ev / pv : 0;\n  \n  return {\n    itemCode: item.itemCode || '',\n    description: item.description || '',\n    plannedQty: item.plannedQty || 0,\n    actualQty: item.actualQty || 0,\n    percentComplete: item.percentComplete || 0,\n    plannedValue: pv,\n    actualCost: ac,\n    earnedValue: ev,\n    costVariance: cv,\n    scheduleVariance: sv,\n    cpi: cpi.toFixed(2),\n    spi: spi.toFixed(2),\n    status: cpi >= 1 ? 'On Budget' : cpi >= 0.9 ? 'At Risk' : 'Over Budget'\n  };\n});\n\n// Calculate overall EVM metrics\nconst overallCV = totalEV - totalAC;\nconst overallSV = totalEV - totalPV;\nconst overallCPI = totalAC > 0 ? totalEV / totalAC : 0;\nconst overallSPI = totalPV > 0 ? totalEV / totalPV : 0;\n\nreturn {\n  json: {\n    reportType: 'weekly',\n    projectCode: input.projectCode,\n    projectName: input.projectName,\n    weekNumber: input.weekNumber || '',\n    weekStartDate: input.weekStartDate || '',\n    weekEndDate: input.weekEndDate || '',\n    workItems: itemsAnalysis,\n    summary: {\n      totalPlannedValue: totalPV,\n      totalActualCost: totalAC,\n      totalEarnedValue: totalEV,\n      costVariance: overallCV,\n      scheduleVariance: overallSV,\n      cpi: overallCPI.toFixed(2),\n      spi: overallSPI.toFixed(2),\n      overallStatus: overallCPI >= 1 ? 'On Budget' : overallCPI >= 0.9 ? 'At Risk' : 'Over Budget'\n    },\n    laborSummary: input.laborSummary || {},\n    equipmentSummary: input.equipmentSummary || {},\n    notes: input.notes || '',\n    timestamp: input.timestamp || new Date().toISOString()\n  }\n};"
+      },
+      "id": "parse-weekly",
+      "name": "Parse Weekly Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Monthly EVM Report Data - Comprehensive\nconst input = $input.first().json;\n\n// Validate required fields\nif (!input.projectCode || !input.projectName) {\n  throw new Error('Missing required fields: projectCode or projectName');\n}\n\nconst monthNames = ['January', 'February', 'March', 'April', 'May', 'June', \n                    'July', 'August', 'September', 'October', 'November', 'December'];\n\n// Parse work items with full EVM analysis\nconst items = input.items || [];\nlet totalBAC = 0, totalPV = 0, totalAC = 0, totalEV = 0;\nlet totalLabor = 0, totalEquip = 0, totalMat = 0, totalSub = 0;\n\nconst itemsAnalysis = items.map((item, index) => {\n  const bac = parseFloat(item.BAC) || 0;\n  const pv = parseFloat(item.PV) || 0;\n  const ac = parseFloat(item.AC) || 0;\n  const ev = parseFloat(item.EV) || 0;\n  const percentComplete = parseFloat(item.percentComplete) || 0;\n  \n  totalBAC += bac;\n  totalPV += pv;\n  totalAC += ac;\n  totalEV += ev;\n  \n  // Calculate item-level EVM metrics\n  const cv = ev - ac;\n  const sv = ev - pv;\n  const cpi = ac > 0 ? ev / ac : 0;\n  const spi = pv > 0 ? ev / pv : 0;\n  const tcpi = (bac - ev) > 0 && (bac - ac) > 0 ? (bac - ev) / (bac - ac) : 0;\n  const eac = cpi > 0 ? bac / cpi : bac;\n  const etc = eac - ac;\n  const vac = bac - eac;\n  \n  // Determine status\n  let status = 'On Budget';\n  let statusColor = 'green';\n  if (cpi < 0.9) {\n    status = 'Over Budget';\n    statusColor = 'red';\n  } else if (cpi < 1) {\n    status = 'At Risk';\n    statusColor = 'yellow';\n  }\n  \n  return {\n    itemNumber: index + 1,\n    itemCode: item.code || `ITEM-${index + 1}`,\n    description: item.description || '',\n    bac: bac,\n    pv: pv,\n    ac: ac,\n    ev: ev,\n    percentComplete: percentComplete,\n    cv: cv,\n    sv: sv,\n    cpi: parseFloat(cpi.toFixed(3)),\n    spi: parseFloat(spi.toFixed(3)),\n    tcpi: parseFloat(tcpi.toFixed(3)),\n    eac: eac,\n    etc: etc,\n    vac: vac,\n    status: status,\n    statusColor: statusColor\n  };\n});\n\n// Add cumulative values\nconst cumulative = input.cumulative || {};\ntotalBAC += parseFloat(cumulative.BAC) || 0;\ntotalPV += parseFloat(cumulative.PV) || 0;\ntotalAC += parseFloat(cumulative.AC) || 0;\ntotalEV += parseFloat(cumulative.EV) || 0;\n\n// Calculate indirect costs\nconst indirect = input.indirectCosts || {};\nconst salaries = parseFloat(indirect.salaries) || 0;\nconst expenses = parseFloat(indirect.expenses) || 0;\nconst otherIndirect = parseFloat(indirect.other) || 0;\nconst totalIndirect = salaries + expenses + otherIndirect;\n\n// Calculate overall EVM metrics\nconst overallCV = totalEV - totalAC;\nconst overallSV = totalEV - totalPV;\nconst overallCPI = totalAC > 0 ? totalEV / totalAC : 0;\nconst overallSPI = totalPV > 0 ? totalEV / totalPV : 0;\nconst overallTCPI = (totalBAC - totalEV) > 0 && (totalBAC - totalAC) > 0 ? \n                    (totalBAC - totalEV) / (totalBAC - totalAC) : 0;\nconst overallEAC = overallCPI > 0 ? totalBAC / overallCPI : totalBAC;\nconst overallETC = overallEAC - totalAC;\nconst overallVAC = totalBAC - overallEAC;\n\n// Calculate profitability\nconst revenue = totalEV;\nconst directCost = totalAC;\nconst grossProfit = revenue - directCost;\nconst grossMargin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;\nconst netProfit = grossProfit - totalIndirect;\nconst netMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;\n\n// Determine overall project health\nlet projectHealth = 'Healthy';\nlet healthColor = 'green';\nlet healthEmoji = '✅';\nif (overallCPI < 0.9 || overallSPI < 0.9) {\n  projectHealth = 'Critical';\n  healthColor = 'red';\n  healthEmoji = '🚨';\n} else if (overallCPI < 1 || overallSPI < 1) {\n  projectHealth = 'At Risk';\n  healthColor = 'yellow';\n  healthEmoji = '⚠️';\n}\n\nreturn {\n  json: {\n    reportType: 'monthly_evm',\n    projectCode: input.projectCode,\n    projectName: input.projectName,\n    month: parseInt(input.month) || new Date().getMonth() + 1,\n    monthName: monthNames[(parseInt(input.month) || new Date().getMonth() + 1) - 1],\n    year: parseInt(input.year) || new Date().getFullYear(),\n    reportPeriod: `${monthNames[(parseInt(input.month) || 1) - 1]} ${input.year || new Date().getFullYear()}`,\n    \n    // Work Items Detail\n    workItems: itemsAnalysis,\n    itemCount: itemsAnalysis.length,\n    \n    // EVM Summary\n    evmSummary: {\n      bac: totalBAC,\n      pv: totalPV,\n      ac: totalAC,\n      ev: totalEV,\n      cv: overallCV,\n      sv: overallSV,\n      cpi: parseFloat(overallCPI.toFixed(3)),\n      spi: parseFloat(overallSPI.toFixed(3)),\n      tcpi: parseFloat(overallTCPI.toFixed(3)),\n      eac: overallEAC,\n      etc: overallETC,\n      vac: overallVAC,\n      percentComplete: totalBAC > 0 ? parseFloat(((totalEV / totalBAC) * 100).toFixed(1)) : 0\n    },\n    \n    // Cost Breakdown\n    costBreakdown: {\n      labor: totalLabor,\n      equipment: totalEquip,\n      materials: totalMat,\n      subcontractor: totalSub,\n      directCost: directCost,\n      indirectCost: totalIndirect,\n      totalCost: directCost + totalIndirect\n    },\n    \n    // Indirect Costs Detail\n    indirectCosts: {\n      salaries: salaries,\n      expenses: expenses,\n      other: otherIndirect,\n      total: totalIndirect\n    },\n    \n    // Cumulative Values\n    cumulative: {\n      bac: parseFloat(cumulative.BAC) || 0,\n      pv: parseFloat(cumulative.PV) || 0,\n      ac: parseFloat(cumulative.AC) || 0,\n      ev: parseFloat(cumulative.EV) || 0\n    },\n    \n    // Profitability Analysis\n    profitability: {\n      revenue: revenue,\n      directCost: directCost,\n      grossProfit: grossProfit,\n      grossMargin: parseFloat(grossMargin.toFixed(2)),\n      indirectCost: totalIndirect,\n      netProfit: netProfit,\n      netMargin: parseFloat(netMargin.toFixed(2))\n    },\n    \n    // Project Health Assessment\n    projectHealth: {\n      status: projectHealth,\n      color: healthColor,\n      emoji: healthEmoji,\n      cpiStatus: overallCPI >= 1 ? 'Under Budget ✓' : overallCPI >= 0.9 ? 'At Risk ⚠' : 'Over Budget ✗',\n      spiStatus: overallSPI >= 1 ? 'On Schedule ✓' : overallSPI >= 0.9 ? 'Behind ⚠' : 'Delayed ✗',\n      tcpiStatus: overallTCPI <= 1 ? 'Achievable ✓' : overallTCPI <= 1.1 ? 'Challenging ⚠' : 'Difficult ✗'\n    },\n    \n    // Metadata\n    notes: input.notes || '',\n    timestamp: input.timestamp || new Date().toISOString(),\n    generatedAt: new Date().toISOString()\n  }\n};"
+      },
+      "id": "parse-monthly",
+      "name": "Parse Monthly EVM Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.projectCode }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-daily",
+      "name": "Check Daily Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.projectCode }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-weekly",
+      "name": "Check Weekly Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-error",
+              "leftValue": "={{ $json.projectCode }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-monthly",
+      "name": "Check Monthly Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 700]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Daily Reports",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $json.reportDate }}",
+            "Project Code": "={{ $json.projectCode }}",
+            "Project Name": "={{ $json.projectName }}",
+            "Total Workers": "={{ $json.labor.totalWorkers }}",
+            "Labor Cost": "={{ $json.financials.laborCost }}",
+            "Equipment Cost": "={{ $json.financials.equipmentCost }}",
+            "Subcontractor Cost": "={{ $json.financials.subcontractorCost }}",
+            "Total Direct Cost": "={{ $json.financials.totalDirectCost }}",
+            "VAT (15%)": "={{ $json.financials.vat }}",
+            "Grand Total": "={{ $json.financials.grandTotal }}",
+            "Weather": "={{ $json.weather }}",
+            "Notes": "={{ $json.notes }}",
+            "Timestamp": "={{ $json.timestamp }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "sheets-daily",
+      "name": "Append to Google Sheets (Daily)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [900, 260],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Weekly Reports",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Week": "={{ $json.weekNumber }}",
+            "Start Date": "={{ $json.weekStartDate }}",
+            "End Date": "={{ $json.weekEndDate }}",
+            "Project Code": "={{ $json.projectCode }}",
+            "Project Name": "={{ $json.projectName }}",
+            "Total PV": "={{ $json.summary.totalPlannedValue }}",
+            "Total AC": "={{ $json.summary.totalActualCost }}",
+            "Total EV": "={{ $json.summary.totalEarnedValue }}",
+            "CV": "={{ $json.summary.costVariance }}",
+            "SV": "={{ $json.summary.scheduleVariance }}",
+            "CPI": "={{ $json.summary.cpi }}",
+            "SPI": "={{ $json.summary.spi }}",
+            "Status": "={{ $json.summary.overallStatus }}",
+            "Notes": "={{ $json.notes }}",
+            "Timestamp": "={{ $json.timestamp }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "sheets-weekly",
+      "name": "Append to Google Sheets (Weekly)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [900, 460],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Monthly EVM Reports",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Report Period": "={{ $json.reportPeriod }}",
+            "Project Code": "={{ $json.projectCode }}",
+            "Project Name": "={{ $json.projectName }}",
+            "BAC": "={{ $json.evmSummary.bac }}",
+            "PV": "={{ $json.evmSummary.pv }}",
+            "AC": "={{ $json.evmSummary.ac }}",
+            "EV": "={{ $json.evmSummary.ev }}",
+            "CV": "={{ $json.evmSummary.cv }}",
+            "SV": "={{ $json.evmSummary.sv }}",
+            "CPI": "={{ $json.evmSummary.cpi }}",
+            "SPI": "={{ $json.evmSummary.spi }}",
+            "TCPI": "={{ $json.evmSummary.tcpi }}",
+            "EAC": "={{ $json.evmSummary.eac }}",
+            "ETC": "={{ $json.evmSummary.etc }}",
+            "% Complete": "={{ $json.evmSummary.percentComplete }}",
+            "Gross Profit": "={{ $json.profitability.grossProfit }}",
+            "Gross Margin %": "={{ $json.profitability.grossMargin }}",
+            "Net Profit": "={{ $json.profitability.netProfit }}",
+            "Net Margin %": "={{ $json.profitability.netMargin }}",
+            "Indirect Costs": "={{ $json.indirectCosts.total }}",
+            "Project Health": "={{ $json.projectHealth.status }}",
+            "Items Count": "={{ $json.itemCount }}",
+            "Notes": "={{ $json.notes }}",
+            "Timestamp": "={{ $json.timestamp }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "sheets-monthly",
+      "name": "Append to Google Sheets (Monthly)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [900, 660],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Monthly Work Items",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "sheets-monthly-items",
+      "name": "Append Work Items to Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [900, 800],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare work items for Google Sheets\nconst input = $input.first().json;\nconst items = input.workItems || [];\nconst reportPeriod = input.reportPeriod;\nconst projectCode = input.projectCode;\nconst projectName = input.projectName;\n\nconst rows = items.map(item => ({\n  json: {\n    'Report Period': reportPeriod,\n    'Project Code': projectCode,\n    'Project Name': projectName,\n    'Item #': item.itemNumber,\n    'Item Code': item.itemCode,\n    'Description': item.description,\n    'BAC': item.bac,\n    'PV': item.pv,\n    'AC': item.ac,\n    'EV': item.ev,\n    '% Complete': item.percentComplete,\n    'CV': item.cv,\n    'SV': item.sv,\n    'CPI': item.cpi,\n    'SPI': item.spi,\n    'TCPI': item.tcpi,\n    'EAC': item.eac,\n    'ETC': item.etc,\n    'Status': item.status\n  }\n}));\n\nreturn rows.length > 0 ? rows : [{ json: { message: 'No items to process' } }];"
+      },
+      "id": "prepare-items",
+      "name": "Prepare Items for Sheets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 800]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate AI Analysis Prompt for Monthly EVM Report\nconst data = $input.first().json;\n\nconst prompt = `You are a senior construction project management consultant specializing in Earned Value Management (EVM). Analyze this monthly project report and provide actionable insights.\n\n## PROJECT INFORMATION\n- **Project:** ${data.projectCode} - ${data.projectName}\n- **Report Period:** ${data.reportPeriod}\n- **Items Count:** ${data.itemCount}\n\n## EVM METRICS SUMMARY\n| Metric | Value | Status |\n|--------|-------|--------|\n| BAC (Budget at Completion) | ${data.evmSummary.bac.toLocaleString()} SAR | - |\n| PV (Planned Value) | ${data.evmSummary.pv.toLocaleString()} SAR | - |\n| AC (Actual Cost) | ${data.evmSummary.ac.toLocaleString()} SAR | - |\n| EV (Earned Value) | ${data.evmSummary.ev.toLocaleString()} SAR | - |\n| CV (Cost Variance) | ${data.evmSummary.cv.toLocaleString()} SAR | ${data.evmSummary.cv >= 0 ? '✅ Favorable' : '❌ Unfavorable'} |\n| SV (Schedule Variance) | ${data.evmSummary.sv.toLocaleString()} SAR | ${data.evmSummary.sv >= 0 ? '✅ Favorable' : '❌ Unfavorable'} |\n| CPI (Cost Performance Index) | ${data.evmSummary.cpi} | ${data.projectHealth.cpiStatus} |\n| SPI (Schedule Performance Index) | ${data.evmSummary.spi} | ${data.projectHealth.spiStatus} |\n| TCPI (To Complete Performance Index) | ${data.evmSummary.tcpi} | ${data.projectHealth.tcpiStatus} |\n| EAC (Estimate at Completion) | ${data.evmSummary.eac.toLocaleString()} SAR | - |\n| ETC (Estimate to Complete) | ${data.evmSummary.etc.toLocaleString()} SAR | - |\n| % Complete | ${data.evmSummary.percentComplete}% | - |\n\n## PROFITABILITY ANALYSIS\n| Metric | Value |\n|--------|-------|\n| Revenue (EV) | ${data.profitability.revenue.toLocaleString()} SAR |\n| Direct Costs (AC) | ${data.profitability.directCost.toLocaleString()} SAR |\n| Indirect Costs | ${data.profitability.indirectCost.toLocaleString()} SAR |\n| Gross Profit | ${data.profitability.grossProfit.toLocaleString()} SAR |\n| Gross Margin | ${data.profitability.grossMargin}% |\n| Net Profit | ${data.profitability.netProfit.toLocaleString()} SAR |\n| Net Margin | ${data.profitability.netMargin}% |\n\n## INDIRECT COSTS BREAKDOWN\n- Salaries: ${data.indirectCosts.salaries.toLocaleString()} SAR\n- Expenses: ${data.indirectCosts.expenses.toLocaleString()} SAR\n- Other: ${data.indirectCosts.other.toLocaleString()} SAR\n\n## PROJECT HEALTH: ${data.projectHealth.emoji} ${data.projectHealth.status}\n\nPlease provide:\n1. **Executive Summary** (2-3 sentences on overall project health)\n2. **Cost Analysis** (What's driving the CPI? Recommendations for cost control)\n3. **Schedule Analysis** (What's affecting SPI? How to recover if behind)\n4. **Risk Assessment** (Top 3 risks based on current data)\n5. **Corrective Actions** (Specific, actionable recommendations)\n6. **Forecast** (Likely outcome at completion based on current trends)\n\nProvide response in both English and Arabic.`;\n\nreturn {\n  json: {\n    ...data,\n    aiPrompt: prompt\n  }\n};"
+      },
+      "id": "prepare-ai-prompt",
+      "name": "Prepare AI Analysis Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 700]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.aiPrompt }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 2000
+        }
+      },
+      "id": "ai-analysis",
+      "name": "AI Analysis Agent",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [1300, 700],
+      "credentials": {
+        "openAiApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Telegram Message for Monthly Report\nconst data = $input.first().json;\nconst aiAnalysis = $('AI Analysis Agent').first().json.message?.content || 'AI analysis unavailable';\n\nconst formatNum = (n) => n ? n.toLocaleString('en-US') : '0';\n\nconst message = `📊 *HAz Monthly EVM Report*\n━━━━━━━━━━━━━━━━━━━━━\n\n🏗️ *Project:* ${data.projectCode} - ${data.projectName}\n📅 *Period:* ${data.reportPeriod}\n📋 *Items:* ${data.itemCount}\n\n💰 *EVM Summary*\n┌─────────────────────────\n│ BAC: ${formatNum(data.evmSummary.bac)} SAR\n│ PV:  ${formatNum(data.evmSummary.pv)} SAR\n│ AC:  ${formatNum(data.evmSummary.ac)} SAR\n│ EV:  ${formatNum(data.evmSummary.ev)} SAR\n└─────────────────────────\n\n📈 *Performance Indices*\n• CPI: ${data.evmSummary.cpi} ${data.projectHealth.cpiStatus}\n• SPI: ${data.evmSummary.spi} ${data.projectHealth.spiStatus}\n• TCPI: ${data.evmSummary.tcpi} ${data.projectHealth.tcpiStatus}\n\n📉 *Variances*\n• CV: ${formatNum(data.evmSummary.cv)} SAR ${data.evmSummary.cv >= 0 ? '✅' : '❌'}\n• SV: ${formatNum(data.evmSummary.sv)} SAR ${data.evmSummary.sv >= 0 ? '✅' : '❌'}\n\n🔮 *Forecast*\n• EAC: ${formatNum(data.evmSummary.eac)} SAR\n• ETC: ${formatNum(data.evmSummary.etc)} SAR\n• % Complete: ${data.evmSummary.percentComplete}%\n\n💹 *Profitability*\n• Gross Profit: ${formatNum(data.profitability.grossProfit)} SAR (${data.profitability.grossMargin}%)\n• Net Profit: ${formatNum(data.profitability.netProfit)} SAR (${data.profitability.netMargin}%)\n\n${data.projectHealth.emoji} *Project Status: ${data.projectHealth.status}*\n\n━━━━━━━━━━━━━━━━━━━━━\n⏰ Generated: ${new Date(data.timestamp).toLocaleString('en-SA', { timeZone: 'Asia/Riyadh' })}`;\n\nreturn {\n  json: {\n    ...data,\n    telegramMessage: message,\n    aiAnalysis: aiAnalysis\n  }\n};"
+      },
+      "id": "prepare-telegram",
+      "name": "Prepare Telegram Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Email HTML for Monthly Report\nconst data = $input.first().json;\nconst aiAnalysis = data.aiAnalysis || 'AI analysis unavailable';\n\nconst formatNum = (n) => n ? n.toLocaleString('en-US') : '0';\n\nconst getStatusColor = (value, threshold1, threshold2, reverse = false) => {\n  if (reverse) {\n    return value <= threshold1 ? '#22c55e' : value <= threshold2 ? '#f59e0b' : '#ef4444';\n  }\n  return value >= threshold1 ? '#22c55e' : value >= threshold2 ? '#f59e0b' : '#ef4444';\n};\n\nconst html = `\n<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; margin: 0; padding: 20px; }\n    .container { max-width: 800px; margin: 0 auto; background: white; border-radius: 15px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }\n    .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: white; padding: 30px; text-align: center; }\n    .header h1 { margin: 0 0 10px 0; font-size: 24px; }\n    .header p { margin: 0; opacity: 0.9; }\n    .content { padding: 30px; }\n    .section { margin-bottom: 25px; }\n    .section-title { font-size: 18px; font-weight: 600; color: #1a1a2e; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; margin-bottom: 15px; }\n    .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }\n    .metric-card { background: #f8f9fa; border-radius: 10px; padding: 15px; text-align: center; }\n    .metric-value { font-size: 20px; font-weight: 700; color: #1a1a2e; }\n    .metric-label { font-size: 12px; color: #666; margin-top: 5px; }\n    .status-badge { display: inline-block; padding: 5px 15px; border-radius: 20px; font-weight: 600; font-size: 14px; }\n    .status-good { background: #dcfce7; color: #166534; }\n    .status-warning { background: #fef3c7; color: #92400e; }\n    .status-danger { background: #fee2e2; color: #991b1b; }\n    table { width: 100%; border-collapse: collapse; margin-top: 10px; }\n    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e0e0e0; }\n    th { background: #f8f9fa; font-weight: 600; color: #1a1a2e; }\n    .health-banner { text-align: center; padding: 20px; border-radius: 10px; margin-bottom: 20px; }\n    .health-good { background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%); }\n    .health-warning { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); }\n    .health-danger { background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); }\n    .ai-analysis { background: #f0f7ff; border-radius: 10px; padding: 20px; margin-top: 20px; }\n    .ai-analysis h3 { color: #1a1a2e; margin-top: 0; }\n    .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #666; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>📊 Monthly EVM Report</h1>\n      <p>${data.projectCode} - ${data.projectName}</p>\n      <p style=\"margin-top: 10px; font-size: 14px;\">${data.reportPeriod}</p>\n    </div>\n    \n    <div class=\"content\">\n      <div class=\"health-banner health-${data.projectHealth.color === 'green' ? 'good' : data.projectHealth.color === 'yellow' ? 'warning' : 'danger'}\">\n        <h2 style=\"margin: 0;\">${data.projectHealth.emoji} Project Status: ${data.projectHealth.status}</h2>\n        <p style=\"margin: 10px 0 0 0;\">CPI: ${data.evmSummary.cpi} | SPI: ${data.evmSummary.spi} | ${data.evmSummary.percentComplete}% Complete</p>\n      </div>\n      \n      <div class=\"section\">\n        <h3 class=\"section-title\">💰 EVM Summary</h3>\n        <div class=\"metrics-grid\">\n          <div class=\"metric-card\">\n            <div class=\"metric-value\">${formatNum(data.evmSummary.bac)}</div>\n            <div class=\"metric-label\">BAC (SAR)</div>\n          </div>\n          <div class=\"metric-card\">\n            <div class=\"metric-value\">${formatNum(data.evmSummary.pv)}</div>\n            <div class=\"metric-label\">PV (SAR)</div>\n          </div>\n          <div class=\"metric-card\">\n            <div class=\"metric-value\">${formatNum(data.evmSummary.ac)}</div>\n            <div class=\"metric-label\">AC (SAR)</div>\n          </div>\n          <div class=\"metric-card\">\n            <div class=\"metric-value\">${formatNum(data.evmSummary.ev)}</div>\n            <div class=\"metric-label\">EV (SAR)</div>\n          </div>\n        </div>\n      </div>\n      \n      <div class=\"section\">\n        <h3 class=\"section-title\">📈 Performance Indices</h3>\n        <table>\n          <tr>\n            <th>Index</th>\n            <th>Value</th>\n            <th>Status</th>\n          </tr>\n          <tr>\n            <td>CPI (Cost Performance)</td>\n            <td><strong>${data.evmSummary.cpi}</strong></td>\n            <td><span class=\"status-badge ${data.evmSummary.cpi >= 1 ? 'status-good' : data.evmSummary.cpi >= 0.9 ? 'status-warning' : 'status-danger'}\">${data.projectHealth.cpiStatus}</span></td>\n          </tr>\n          <tr>\n            <td>SPI (Schedule Performance)</td>\n            <td><strong>${data.evmSummary.spi}</strong></td>\n            <td><span class=\"status-badge ${data.evmSummary.spi >= 1 ? 'status-good' : data.evmSummary.spi >= 0.9 ? 'status-warning' : 'status-danger'}\">${data.projectHealth.spiStatus}</span></td>\n          </tr>\n          <tr>\n            <td>TCPI (To Complete)</td>\n            <td><strong>${data.evmSummary.tcpi}</strong></td>\n            <td><span class=\"status-badge ${data.evmSummary.tcpi <= 1 ? 'status-good' : data.evmSummary.tcpi <= 1.1 ? 'status-warning' : 'status-danger'}\">${data.projectHealth.tcpiStatus}</span></td>\n          </tr>\n        </table>\n      </div>\n      \n      <div class=\"section\">\n        <h3 class=\"section-title\">📉 Variances & Forecast</h3>\n        <table>\n          <tr>\n            <th>Metric</th>\n            <th>Value (SAR)</th>\n            <th>Status</th>\n          </tr>\n          <tr>\n            <td>Cost Variance (CV)</td>\n            <td><strong>${formatNum(data.evmSummary.cv)}</strong></td>\n            <td>${data.evmSummary.cv >= 0 ? '✅ Favorable' : '❌ Unfavorable'}</td>\n          </tr>\n          <tr>\n            <td>Schedule Variance (SV)</td>\n            <td><strong>${formatNum(data.evmSummary.sv)}</strong></td>\n            <td>${data.evmSummary.sv >= 0 ? '✅ Favorable' : '❌ Unfavorable'}</td>\n          </tr>\n          <tr>\n            <td>EAC (Estimate at Completion)</td>\n            <td><strong>${formatNum(data.evmSummary.eac)}</strong></td>\n            <td>-</td>\n          </tr>\n          <tr>\n            <td>ETC (Estimate to Complete)</td>\n            <td><strong>${formatNum(data.evmSummary.etc)}</strong></td>\n            <td>-</td>\n          </tr>\n        </table>\n      </div>\n      \n      <div class=\"section\">\n        <h3 class=\"section-title\">💹 Profitability Analysis</h3>\n        <div class=\"metrics-grid\">\n          <div class=\"metric-card\">\n            <div class=\"metric-value\" style=\"color: ${data.profitability.grossProfit >= 0 ? '#22c55e' : '#ef4444'}\">${formatNum(data.profitability.grossProfit)}</div>\n            <div class=\"metric-label\">Gross Profit (SAR)</div>\n          </div>\n          <div class=\"metric-card\">\n            <div class=\"metric-value\">${data.profitability.grossMargin}%</div>\n            <div class=\"metric-label\">Gross Margin</div>\n          </div>\n          <div class=\"metric-card\">\n            <div class=\"metric-value\" style=\"color: ${data.profitability.netProfit >= 0 ? '#22c55e' : '#ef4444'}\">${formatNum(data.profitability.netProfit)}</div>\n            <div class=\"metric-label\">Net Profit (SAR)</div>\n          </div>\n          <div class=\"metric-card\">\n            <div class=\"metric-value\">${data.profitability.netMargin}%</div>\n            <div class=\"metric-label\">Net Margin</div>\n          </div>\n        </div>\n      </div>\n      \n      <div class=\"ai-analysis\">\n        <h3>🤖 AI Analysis & Recommendations</h3>\n        <div style=\"white-space: pre-wrap;\">${aiAnalysis}</div>\n      </div>\n    </div>\n    \n    <div class=\"footer\">\n      <p>HAz Construction PM System | Generated: ${new Date(data.timestamp).toLocaleString('en-SA', { timeZone: 'Asia/Riyadh' })}</p>\n      <p>This is an automated report. Please review all data before making decisions.</p>\n    </div>\n  </div>\n</body>\n</html>`;\n\nreturn {\n  json: {\n    ...data,\n    emailHtml: html,\n    emailSubject: `📊 Monthly EVM Report: ${data.projectCode} - ${data.reportPeriod} | ${data.projectHealth.status}`\n  }\n};"
+      },
+      "id": "prepare-email",
+      "name": "Prepare Email HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-telegram",
+              "leftValue": "={{ $json.sendTelegram }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-send-telegram",
+      "name": "Send Telegram?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1900, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-email",
+              "leftValue": "={{ $json.sendEmail }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-send-email",
+      "name": "Send Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1900, 800]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegramChatId || '' }}",
+        "text": "={{ $json.telegramMessage }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram",
+      "name": "Send Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2100, 560],
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "noreply@haz-pm.com",
+        "toEmail": "={{ $json.emailTo || '' }}",
+        "subject": "={{ $json.emailSubject }}",
+        "emailType": "html",
+        "html": "={{ $json.emailHtml }}",
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2100, 760],
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Report processed successfully', reportType: $json.reportType, projectCode: $json.projectCode, timestamp: $json.timestamp }) }}"
+      },
+      "id": "response-success-daily",
+      "name": "Response Success (Daily)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 260]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Report processed successfully', reportType: $json.reportType, projectCode: $json.projectCode, timestamp: $json.timestamp }) }}"
+      },
+      "id": "response-success-weekly",
+      "name": "Response Success (Weekly)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 460]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Monthly EVM Report processed successfully', reportType: $json.reportType, projectCode: $json.projectCode, projectHealth: $json.projectHealth.status, timestamp: $json.timestamp }) }}"
+      },
+      "id": "response-success-monthly",
+      "name": "Response Success (Monthly)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2300, 700]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'Invalid report data' }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "response-error-daily",
+      "name": "Response Error (Daily)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [800, 360]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'Invalid report data' }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "response-error-weekly",
+      "name": "Response Error (Weekly)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [800, 560]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'Invalid report data' }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "response-error-monthly",
+      "name": "Response Error (Monthly)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [800, 760]
+    },
+    {
+      "parameters": {
+        "name": "haz_pm_data",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "root",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "gdrive-create-folder",
+      "name": "Create Reports Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1100, 860],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "name": "={{ 'Monthly_EVM_' + $json.projectCode + '_' + $json.reportPeriod.replace(' ', '_') + '.json' }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "gdrive-upload",
+      "name": "Save to Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1300, 860],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.powerbi.com/v1.0/myorg/datasets/{dataset_id}/rows",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftPowerBiOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ rows: [{ ProjectCode: $json.projectCode, ProjectName: $json.projectName, ReportPeriod: $json.reportPeriod, BAC: $json.evmSummary.bac, PV: $json.evmSummary.pv, AC: $json.evmSummary.ac, EV: $json.evmSummary.ev, CPI: $json.evmSummary.cpi, SPI: $json.evmSummary.spi, TCPI: $json.evmSummary.tcpi, CV: $json.evmSummary.cv, SV: $json.evmSummary.sv, GrossProfit: $json.profitability.grossProfit, NetProfit: $json.profitability.netProfit, ProjectHealth: $json.projectHealth.status, Timestamp: $json.timestamp }] }) }}",
+        "options": {}
+      },
+      "id": "powerbi-push",
+      "name": "Push to Power BI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 960]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "monthly_evm_reports",
+        "columns": "project_code, project_name, report_period, month, year, bac, pv, ac, ev, cv, sv, cpi, spi, tcpi, eac, etc, percent_complete, gross_profit, gross_margin, net_profit, net_margin, indirect_costs, project_health, items_count, notes, created_at",
+        "additionalFields": {}
+      },
+      "id": "postgres-insert",
+      "name": "Save to PostgreSQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1300, 1060],
+      "credentials": {
+        "postgres": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for PostgreSQL/Supabase insert\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    project_code: data.projectCode,\n    project_name: data.projectName,\n    report_period: data.reportPeriod,\n    month: data.month,\n    year: data.year,\n    bac: data.evmSummary.bac,\n    pv: data.evmSummary.pv,\n    ac: data.evmSummary.ac,\n    ev: data.evmSummary.ev,\n    cv: data.evmSummary.cv,\n    sv: data.evmSummary.sv,\n    cpi: data.evmSummary.cpi,\n    spi: data.evmSummary.spi,\n    tcpi: data.evmSummary.tcpi,\n    eac: data.evmSummary.eac,\n    etc: data.evmSummary.etc,\n    percent_complete: data.evmSummary.percentComplete,\n    gross_profit: data.profitability.grossProfit,\n    gross_margin: data.profitability.grossMargin,\n    net_profit: data.profitability.netProfit,\n    net_margin: data.profitability.netMargin,\n    indirect_costs: data.indirectCosts.total,\n    project_health: data.projectHealth.status,\n    items_count: data.itemCount,\n    notes: data.notes,\n    raw_data: JSON.stringify(data),\n    created_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "prepare-db",
+      "name": "Prepare for Database",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 1060]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"reportTypes\": {\n    \"daily\": {\n      \"webhook\": \"/webhook/haz-daily-report\",\n      \"fields\": [\"projectCode\", \"projectName\", \"reportDate\", \"labor\", \"equipment\", \"subcontractors\"]\n    },\n    \"weekly\": {\n      \"webhook\": \"/webhook/haz-weekly-report\",  \n      \"fields\": [\"projectCode\", \"projectName\", \"weekNumber\", \"workItems\"]\n    },\n    \"monthly\": {\n      \"webhook\": \"/webhook/haz-monthly-report\",\n      \"fields\": [\"projectCode\", \"projectName\", \"month\", \"year\", \"items\", \"indirectCosts\", \"cumulative\"]\n    }\n  },\n  \"outputOptions\": {\n    \"telegram\": true,\n    \"email\": true,\n    \"googleSheets\": true,\n    \"googleDrive\": true,\n    \"powerBI\": true,\n    \"database\": true\n  }\n}",
+        "options": {}
+      },
+      "id": "config-node",
+      "name": "Workflow Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [180, 100]
+    }
+  ],
+  "connections": {
+    "Webhook - Daily Report": {
+      "main": [
+        [
+          {
+            "node": "Parse Daily Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Weekly Report": {
+      "main": [
+        [
+          {
+            "node": "Parse Weekly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Monthly EVM Report": {
+      "main": [
+        [
+          {
+            "node": "Parse Monthly EVM Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Daily Report": {
+      "main": [
+        [
+          {
+            "node": "Check Daily Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Weekly Report": {
+      "main": [
+        [
+          {
+            "node": "Check Weekly Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Monthly EVM Report": {
+      "main": [
+        [
+          {
+            "node": "Check Monthly Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Daily Valid": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets (Daily)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response Error (Daily)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Weekly Valid": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response Error (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Monthly Valid": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets (Monthly)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Items for Sheets",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare AI Analysis Prompt",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare for Database",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response Error (Monthly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheets (Daily)": {
+      "main": [
+        [
+          {
+            "node": "Response Success (Daily)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheets (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Response Success (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheets (Monthly)": {
+      "main": [
+        [
+          {
+            "node": "Save to Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Items for Sheets": {
+      "main": [
+        [
+          {
+            "node": "Append Work Items to Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Analysis Prompt": {
+      "main": [
+        [
+          {
+            "node": "AI Analysis Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Analysis Agent": {
+      "main": [
+        [
+          {
+            "node": "Prepare Telegram Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Telegram Message": {
+      "main": [
+        [
+          {
+            "node": "Prepare Email HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Email HTML": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Email?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Response Success (Monthly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram?": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email?": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare for Database": {
+      "main": [
+        [
+          {
+            "node": "Save to PostgreSQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Google Drive": {
+      "main": [
+        [
+          {
+            "node": "Push to Power BI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "HAz PM System",
+      "createdAt": "2025-01-01T00:00:00.000Z",
+      "updatedAt": "2025-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "Construction",
+      "createdAt": "2025-01-01T00:00:00.000Z",
+      "updatedAt": "2025-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "EVM",
+      "createdAt": "2025-01-01T00:00:00.000Z",
+      "updatedAt": "2025-01-01T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 3,
+  "pinData": {}
+}
